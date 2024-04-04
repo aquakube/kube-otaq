@@ -1,0 +1,126 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: "{{ name }}-provisioning-"
+  labels:
+    otaqs.aquakube.io/name: "{{ name }}"
+spec:
+  entrypoint: entry
+  parallelism: 1
+  archiveLogs: true
+  dnsPolicy: ClusterFirstWithHostNet
+  hostNetwork: true
+  artifactRepositoryRef:
+    configMap: artifact-repositories
+    key: default-s3-artifact-repository
+  imagePullSecrets:
+    - name: k8s-ecr-login-renew-docker-secret
+  onExit: otaq-notify
+  templates:
+    - name: entry
+      dag:
+        tasks:
+          - name: otaq-discover
+            template: otaq-discover
+
+          - name: otaq-provision
+            depends: otaq-discover.Succeeded
+            template: otaq-provision
+            arguments:
+              artifacts:
+                - name: state
+                  from: "{% raw %}{{tasks.otaq-discover.outputs.artifacts.state}}{% endraw %}"
+
+          - name: otaq-verify
+            depends: otaq-provision.Succeeded
+            template: otaq-verify
+            arguments:
+              artifacts:
+                - name: state
+                  from: "{% raw %}{{tasks.otaq-provision.outputs.artifacts.state}}{% endraw %}"
+
+    - name: otaq-discover
+      container:
+        image:  "{{ image }}"
+        imagePullPolicy: IfNotPresent
+        command: ["python3"]
+        args: ["main.py", "--command=discover"]
+        env:
+          - name: RESOURCE
+            value: "{{ resource }}"
+          - name: FIRMWARE_ALLOW_LIST
+            value: "{{ firmware_allow_list }}"
+          - name: FIRMWARE_DENY_LIST
+            value: "{{ firmware_deny_list }}"
+      activeDeadlineSeconds: 120 # 2 minutes
+      outputs:
+        artifacts:
+        - name: state
+          path: /tmp/state.json
+          s3:
+            key: "workflow-artifacts/{% raw %}{{workflow.uid}}{% endraw %}/state.json"
+
+    - name: otaq-provision
+      inputs:
+        artifacts:
+        - name: state
+          path: /tmp/state.json
+      container:
+        image:  "{{ image }}"
+        imagePullPolicy: IfNotPresent
+        command: ["python3"]
+        args: ["main.py", "--command=provision"]
+        env:
+          - name: RESOURCE
+            value: "{{ resource }}"
+      activeDeadlineSeconds: 240 # 4 minutes
+      outputs:
+        artifacts:
+          - name: state
+            path: /tmp/state.json
+            s3:
+              key: "workflow-artifacts/{% raw %}{{workflow.uid}}{% endraw %}/state.json"
+
+    - name: otaq-verify
+      inputs:
+        artifacts:
+        - name: state
+          path: /tmp/state.json
+      container:
+        image: "{{ image }}"
+        imagePullPolicy: IfNotPresent
+        command: ["python3"]
+        args: ["main.py", "--command=verify"]
+        env:
+          - name: RESOURCE
+            value: "{{ resource }}"
+      activeDeadlineSeconds: 240 # 4 minutes
+      outputs:
+        artifacts:
+          - name: state
+            path: /tmp/state.json
+            s3:
+              key: "workflow-artifacts/{% raw %}{{workflow.uid}}{% endraw %}/state.json"
+
+    - name: otaq-notify
+      inputs:
+        artifacts:
+          - name: state
+            path: /tmp/state.json
+            s3:
+              key: "workflow-artifacts/{% raw %}{{workflow.uid}}{% endraw %}/state.json"
+      container:
+        image: "{{ image }}"
+        imagePullPolicy: IfNotPresent
+        command: ["python3"]
+        args: ["main.py", "--command=notify"]
+        env:
+          - name: RESOURCE
+            value: "{{ resource }}"
+          - name: GOOGLE_WEBHOOK
+            value: "{{ google_webhook }}"
+          - name: SLACK_WEBHOOK
+            value: "{{ slack_webhook }}"
+          - name: WORKFLOW_STATUS
+            value: "{% raw %}{{workflow.status}}{% endraw %}"
+      activeDeadlineSeconds: 120 # 2 minutes

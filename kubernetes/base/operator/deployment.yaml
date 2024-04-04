@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otaq-operator
+  labels:
+    app.kubernetes.io/name: otaq-operator
+    app.kubernetes.io/version: latest
+    app.kubernetes.io/component: controller
+    app.kubernetes.io/part-of: otaq
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: otaq-operator
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: otaq-operator
+    spec:
+      serviceAccountName: otaq-operator
+      imagePullSecrets:
+      - name: k8s-ecr-login-renew-docker-secret
+      containers:
+      - name: operator
+        image: 456087932636.dkr.ecr.us-west-2.amazonaws.com/kube-otaq/operator:7cd29b3
+        ports:
+          - containerPort: 5555
+        resources:
+          requests:
+            cpu: 100m
+            memory: 100Mi
+          limits:
+            cpu: 150m
+            memory: 250Mi
+        env:
+          - name: ENVIRONMENT
+            value: "prod"
+          - name: NAMESPACE
+            value: "otaq"
+          - name: SERVICE_NAME
+            value: "otaq-operator"
+          - name: SERVICE_PORT
+            value: "443"
+          - name: CONTAINER_PORT
+            value: "5555"
+          - name: GOOGLE_WEBHOOK
+            value: "https://chat.googleapis.com/v1/spaces/AAAAzld2J3Q/messages?key=AIzaSyDdI0hCZtE6vySjMm-WEfRq3CPzqKqqsHI&token=JVuxtU7N_YLkgBMiEbkKvI4cLDd2J_I6NtAevr0iX28%3D"
+          - name: SLACK_WEBHOOK
+            value: "https://hooks.slack.com/services/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"
+          - name: FIRMWARE_ALLOW_LIST
+            value: "V4.02.R12.00037972.10012.048100.00000,V5.00.R02.000699H7.10010.140600.0020000"
+          - name: FIRMWARE_DENY_LIST
+            value: "V4.03.R12.00037972.11012.045300.0020000"
